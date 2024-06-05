@@ -146,35 +146,72 @@ def get_input_data_tensors(reader, data_pattern, batch_size, num_readers=1):
     return video_id_batch, video_batch, num_frames_batch
 
 
+# def get_segments(batch_video_mtx, batch_num_frames, segment_size):
+#   """Get segment-level inputs from frame-level features."""
+#   video_batch_size = batch_video_mtx.shape[0]
+#   max_frame = batch_video_mtx.shape[1]
+#   feature_dim = batch_video_mtx.shape[-1]
+#   padded_segment_sizes = (batch_num_frames + segment_size - 1) // segment_size
+#   padded_segment_sizes *= segment_size
+#   segment_mask = (
+#       0 < (padded_segment_sizes[:, np.newaxis] - np.arange(0, max_frame)))
+
+#   # Segment bags.
+#   frame_bags = batch_video_mtx.reshape((-1, feature_dim))
+#   segment_frames = frame_bags[segment_mask.reshape(-1)].reshape(
+#       (-1, segment_size, feature_dim))
+
+#   # Segment num frames.
+#   segment_start_times = np.arange(0, max_frame, segment_size)
+#   num_segments = batch_num_frames[:, np.newaxis] - segment_start_times
+#   num_segment_bags = num_segments.reshape((-1))
+#   valid_segment_mask = num_segment_bags > 0
+#   segment_num_frames = num_segment_bags[valid_segment_mask]
+#   segment_num_frames[segment_num_frames > segment_size] = segment_size
+
+#   max_segment_num = (max_frame + segment_size - 1) // segment_size
+#   video_idxs = np.tile(
+#       np.arange(0, video_batch_size)[:, np.newaxis], [1, max_segment_num])
+#   segment_idxs = np.tile(segment_start_times, [video_batch_size, 1])
+#   idx_bags = np.stack([video_idxs, segment_idxs], axis=-1).reshape((-1, 2))
+#   video_segment_ids = idx_bags[valid_segment_mask]
+
+#   return {
+#       "video_batch": segment_frames,
+#       "num_frames_batch": segment_num_frames,
+#       "video_segment_ids": video_segment_ids
+#   }
+
+import tensorflow as tf
+
 def get_segments(batch_video_mtx, batch_num_frames, segment_size):
   """Get segment-level inputs from frame-level features."""
-  video_batch_size = batch_video_mtx.shape[0]
-  max_frame = batch_video_mtx.shape[1]
-  feature_dim = batch_video_mtx.shape[-1]
+  video_batch_size = tf.shape(batch_video_mtx)[0]
+  max_frame = tf.shape(batch_video_mtx)[1]
+  feature_dim = tf.shape(batch_video_mtx)[-1]
   padded_segment_sizes = (batch_num_frames + segment_size - 1) // segment_size
   padded_segment_sizes *= segment_size
   segment_mask = (
-      0 < (padded_segment_sizes[:, np.newaxis] - np.arange(0, max_frame)))
+      0 < (tf.expand_dims(padded_segment_sizes, axis=-1) - tf.range(0, max_frame)))
 
   # Segment bags.
-  frame_bags = batch_video_mtx.reshape((-1, feature_dim))
-  segment_frames = frame_bags[segment_mask.reshape(-1)].reshape(
-      (-1, segment_size, feature_dim))
+  frame_bags = tf.reshape(batch_video_mtx, (-1, feature_dim))
+  segment_frames = tf.reshape(frame_bags[tf.reshape(segment_mask, [-1])], (-1, segment_size, feature_dim))
 
   # Segment num frames.
-  segment_start_times = np.arange(0, max_frame, segment_size)
-  num_segments = batch_num_frames[:, np.newaxis] - segment_start_times
-  num_segment_bags = num_segments.reshape((-1))
+  segment_start_times = tf.range(0, max_frame, segment_size)
+  num_segments = batch_num_frames[:, tf.newaxis] - segment_start_times
+  num_segment_bags = tf.reshape(num_segments, (-1))
   valid_segment_mask = num_segment_bags > 0
-  segment_num_frames = num_segment_bags[valid_segment_mask]
-  segment_num_frames[segment_num_frames > segment_size] = segment_size
+  segment_num_frames = tf.boolean_mask(num_segment_bags, valid_segment_mask)
+  segment_num_frames = tf.where(segment_num_frames > segment_size, segment_size, segment_num_frames)
 
   max_segment_num = (max_frame + segment_size - 1) // segment_size
-  video_idxs = np.tile(
-      np.arange(0, video_batch_size)[:, np.newaxis], [1, max_segment_num])
-  segment_idxs = np.tile(segment_start_times, [video_batch_size, 1])
-  idx_bags = np.stack([video_idxs, segment_idxs], axis=-1).reshape((-1, 2))
-  video_segment_ids = idx_bags[valid_segment_mask]
+  video_idxs = tf.tile(
+      tf.expand_dims(tf.range(0, video_batch_size), axis=-1), [1, max_segment_num])
+  segment_idxs = tf.tile(tf.expand_dims(segment_start_times, axis=0), [video_batch_size, 1])
+  idx_bags = tf.reshape(tf.stack([video_idxs, segment_idxs], axis=-1), (-1, 2))
+  video_segment_ids = tf.boolean_mask(idx_bags, valid_segment_mask)
 
   return {
       "video_batch": segment_frames,
